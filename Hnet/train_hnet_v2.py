@@ -15,7 +15,7 @@ from hnet_utils import hnet_transformation
 from hnet_data_processor import TusimpleForHnetDataSet
 
 PRE_TRAIN_LEARNING_RATE = 1e-4
-TRAIN_LEARNING_RATE = 5e-5
+TRAIN_LEARNING_RATE = 5e-6
 WEIGHT_DECAY = 0.0002
 
 
@@ -137,7 +137,7 @@ def train_hnet(args, data_loader_train, device, hnet_model):
         if epoch % 1 == 0:
             os.makedirs(args.pre_train_save_dir, exist_ok=True)
             file_path = os.path.join(
-                args.pre_train_save_dir, 'pre_train_hnet_epoch_{}.pth'.format(epoch))
+                args.train_save_dir, 'train_hnet_epoch_{}.pth'.format(epoch))
             torch.save(hnet_model.state_dict(), file_path)
     # save loss list to a pickle file
     save_loss_to_pickle(epochs_loss)

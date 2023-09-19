@@ -42,9 +42,23 @@ class TrainHetLoss(_Loss):
 
     @staticmethod
     def _hnet_loss(input_pts, transformation_coefficient):
-        x_preds_transformation_back, _, _ = hnet_transformation(input_pts, transformation_coefficient, device='cuda')
+
+        filtered_points = []
+        # filter points that has 0 in their z coordinate
+        for i in range(input_pts.shape[0]):
+            valid_points_indices = torch.where(input_pts[i, :, 2] != 0)[0]
+            pts_filtered = input_pts[i, valid_points_indices, :]
+            filtered_points.append(pts_filtered)
+
+        x_preds_transformation_back, _, _ = hnet_transformation(filtered_points, transformation_coefficient, device='cuda')
+
+        total_loss = []
+        for i in range(len(x_preds_transformation_back)):
+            loss = torch.mean(torch.pow(filtered_points[i].t()[0, :] - x_preds_transformation_back[i][0, :], 2))
+            total_loss.append(loss)
+        return_loss = torch.mean(torch.stack(total_loss, dim=0))
 
         # compute loss between back-transformed polynomial fit and gt_pts
-        loss = torch.mean(torch.pow(input_pts.t()[0, :] - x_preds_transformation_back[0, :], 2))
+        # loss = torch.mean(torch.pow(input_pts.t()[0, :] - x_preds_transformation_back[0, :], 2))
 
-        return loss
+        return return_loss
