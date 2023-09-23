@@ -20,6 +20,7 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     - H (torch.Tensor): the transformation matrix (H), shape: [3, 3]
     - preds_transformation_back (torch.Tensor): the predicted and back-projected points of the lane, shape: [3, k]
     - pts_projects_normalized: the projected and normalized points of the lane, shape: [3, k]
+    - w: the polynomial coefficients, shape: [poly_fit_order + 1]
     """
     H = torch.zeros(3, 3, device=device)
 
@@ -69,7 +70,7 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     # extra returns to use
     pts_projects_normalized = pts_projects / pts_projects[2, :]
 
-    return valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized
+    return valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized, w
 
 
 def save_loss_to_pickle(loss_list: list, pickle_file_path: str = './pre_train_hnet_loss.pkl'):
@@ -111,9 +112,8 @@ def draw_images(lane_points: torch.tensor, image: torch.tensor, transformation_c
     :param prefix_name: prefix name for saving the images
     :param output_path: the output path of the images
     """
-    valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized = hnet_transformation(
-        input_pts=lane_points,
-        transformation_coefficient=transformation_coefficient)
+    valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized, _ = hnet_transformation(input_pts=lane_points,
+                                                                                                       transformation_coefficient=transformation_coefficient)
     src_image = image.permute(1, 2, 0).cpu().numpy().astype(np.uint8).copy()
 
     # draw the points on the src image

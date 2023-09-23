@@ -1,9 +1,10 @@
+import enum
+
 import torch
 import numpy as np
 from torch.nn.modules.loss import _Loss
 
 from hnet_utils import hnet_transformation
-
 
 # Use GPU if available, else use CPU
 device = torch.device(
@@ -12,6 +13,17 @@ device = torch.device(
 PRE_H = np.array([-2.04835137e-01, -3.09995252e+00, 7.99098762e+01, -
 2.94687413e+00, 7.06836681e+01, -4.67392998e-02]).astype(np.float32)
 PRE_H = torch.from_numpy(PRE_H).to(device)
+
+COEFF_PENALTY_DEG_TO_WEIGHTS = {
+    2: torch.tensor([50, 20, 0]).to(device),
+    3: torch.tensor([50, 20, 2, 0]).to(device)
+}
+
+
+class REG_TYPE(enum.IntEnum):
+    NONE = 0
+    COEFFICIENTS_L1 = 1
+    COEFFICIENTS_L2 = 2
 
 
 class PreTrainHnetLoss(_Loss):
@@ -35,8 +47,9 @@ class PreTrainHnetLoss(_Loss):
 
 class HetLoss(_Loss):
 
-    def __init__(self):
+    def __init__(self, regularization_type: REG_TYPE = REG_TYPE.NONE):
         super(HetLoss, self).__init__()
+        self.regularization_type = regularization_type
 
     def forward(self, input_pts, transformation_coefficient):
         return self._hnet_loss(input_pts, transformation_coefficient)
@@ -60,8 +73,7 @@ class HetLoss(_Loss):
 
         return loss
 
-    @staticmethod
-    def hnet_single_frame_loss(input_pts, transformation_coefficient, poly_fit_order: int = 3):
+    def hnet_single_frame_loss(self, input_pts, transformation_coefficient, poly_fit_order: int = 3):
         """
         :param input_pts: the points of the lane of a single image, shape: [k, 3] (k is the number of points)
         :param transformation_coefficient: the 6 params from the HNet, shape: [1, 6]
@@ -69,10 +81,15 @@ class HetLoss(_Loss):
         :return single_frame_loss: the loss of the single frame
         """
 
-        valid_pts_reshaped, _, preds_transformation_back, _ = hnet_transformation(input_pts,
-                                                                                  transformation_coefficient,
-                                                                                  poly_fit_order)
+        valid_pts_reshaped, _, preds_transformation_back, _, poly_coeffs = hnet_transformation(input_pts,
+                                                                                               transformation_coefficient,
+                                                                                               poly_fit_order)
         # compute loss between back-transformed polynomial fit and gt_pts
         single_frame_loss = torch.mean(torch.pow(valid_pts_reshaped[0, :] - preds_transformation_back[0, :], 2))
+
+        if self.regularization_type == REG_TYPE.COEFFICIENTS_L1:
+            single_frame_loss += torch.mean(torch.abs(torch.mul(COEFF_PENALTY_DEG_TO_WEIGHTS[poly_fit_order], poly_coeffs.transpose(0,1))))
+        elif self.regularization_type == REG_TYPE.COEFFICIENTS_L2:
+            single_frame_loss += torch.mean(torch.pow(torch.mul(COEFF_PENALTY_DEG_TO_WEIGHTS[poly_fit_order], poly_coeffs.transpose(0,1)), 2))
 
         return single_frame_loss

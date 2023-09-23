@@ -7,8 +7,8 @@ from torch.autograd import Variable
 
 from hnet_model import HNet
 from hnet_data_processor import TusimpleForHnetDataSet
-from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, PRE_H
 from hnet_utils import save_loss_to_pickle, draw_images, plot_loss
+from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, PRE_H, REG_TYPE
 
 PRE_TRAIN_LEARNING_RATE = 1e-4
 TRAIN_LEARNING_RATE = 1e-5
@@ -70,17 +70,9 @@ def train(args):
     data_loader_validation = torch.utils.data.DataLoader(
         validation_set, batch_size=batch_size, shuffle=True, num_workers=0)
 
-    # Use GPU if available, else use CPU
-    device = torch.device(
-        "cuda") if torch.cuda.is_available() else torch.device("cpu")
-
     # Define the model
     hnet_model = HNet()
     hnet_model.to(device)
-
-    # # Define scheduler
-    # lr_scheduler = torch.optim.lr_scheduler.StepLR(
-    #     optimizer, step_size=10, gamma=0.1)
 
     assert args.phase in ['pretrain', 'train',
                           'full_train'], "phase must be pretrain, train or full_train"
@@ -106,7 +98,9 @@ def train_hnet(args, data_loader_train, data_loader_validation, hnet_model):
         print("Load train hnet weights success")
     else:
         print("No train hnet weights")
+
     hnet_loss_function = HetLoss()
+    # hnet_loss_function = HetLoss(regularization_type=REG_TYPE.COEFFICIENTS_L1)
 
     # create weights directory
     weights_dir_path = os.path.join(args.train_save_dir, WEIGHTS_DIR)
