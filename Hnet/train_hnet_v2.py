@@ -3,12 +3,16 @@ import time
 import torch
 import argparse
 import numpy as np
+import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
+# from torch.nn.utils import clip_grad_norm_
 
-from hnet_model import HNet
+from hnet_model import HNet, Resnet_HNet
 from hnet_data_processor import TusimpleForHnetDataSet
-from hnet_utils import save_loss_to_pickle, draw_images, plot_loss
-from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, PRE_H, REG_TYPE
+from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, REG_TYPE
+from hnet_utils import save_loss_to_pickle, draw_images, plot_loss, PRE_H
+
+torch.autograd.set_detect_anomaly(True)
 
 PRE_TRAIN_LEARNING_RATE = 1e-4
 TRAIN_LEARNING_RATE = 1e-5
@@ -24,6 +28,13 @@ WEIGHTS_DIR = 'weights'
 # Use GPU if available, else use CPU
 device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def init_seeds(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    cudnn.deterministic = False
+    cudnn.benchmark = True
 
 
 def parse_args():
@@ -72,6 +83,7 @@ def train(args):
 
     # Define the model
     hnet_model = HNet()
+    # hnet_model = Resnet_HNet()
     hnet_model.to(device)
 
     assert args.phase in ['pretrain', 'train',
@@ -99,8 +111,9 @@ def train_hnet(args, data_loader_train, data_loader_validation, hnet_model):
     else:
         print("No train hnet weights")
 
-    hnet_loss_function = HetLoss()
+    hnet_loss_function = HetLoss(REG_TYPE.NONE)
     # hnet_loss_function = HetLoss(regularization_type=REG_TYPE.COEFFICIENTS_L1)
+    # hnet_loss_function = HetLoss(regularization_type=REG_TYPE.COEFFICIENTS_L2)
 
     # create weights directory
     weights_dir_path = os.path.join(args.train_save_dir, WEIGHTS_DIR)
@@ -157,6 +170,7 @@ def train_one_epoch(data_loader_train, epoch, epochs, hnet_model, optimizer, hne
     start_time = time.time()
     curr_epoch_loss_list = []
     hnet_model.train()
+    is_valid_batch_loss = False
     for i, (gt_images, gt_lane_points) in enumerate(data_loader_train):
         gt_images = Variable(gt_images).to(device).type(torch.float32)
         gt_lane_points = Variable(gt_lane_points).to(device)
@@ -173,20 +187,29 @@ def train_one_epoch(data_loader_train, epoch, epochs, hnet_model, optimizer, hne
         transformation_coefficient = hnet_model(gt_images)
         loss = hnet_loss_function(gt_lane_points, transformation_coefficient)
 
-        # todo: handle cases of nan Hnet output
-        if loss == -1:
-            continue
+        # loss.backward()
 
-        loss.backward()
-        optimizer.step()
+        if loss.item() < 1000:
+            is_valid_batch_loss = True
+            loss.backward()
+            optimizer.step()
+            curr_epoch_loss_list.append(loss.item())
 
-        curr_epoch_loss_list.append(loss.item())
+        # clip_grad_norm_(hnet_model.parameters(), max_norm=1.0)
+
+        # for param in hnet_model.parameters():
+        #     if torch.isnan(param.grad).any():
+        #         print("NaN gradients detected!")
+
+        # optimizer.step()
+
+        # curr_epoch_loss_list.append(loss.item())
 
         # draw_images(gt_lane_points[i], gt_images[i],
         #             transformation_coefficient[0], 'train', i,
         #             output_path=images_output_path)
 
-        if (i + 1) % PRINT_EVERY_N_BATCHES == 0:
+        if (i + 1) % PRINT_EVERY_N_BATCHES == 0 and is_valid_batch_loss:
             print('Train: Epoch [{}/{}], Step [{}/{}], loss: {:.4f}, Time: {:.4f}s'
                   .format(epoch, epochs, i + 1, len(data_loader_train), loss.item(),
                           time.time() - start_time))
@@ -320,5 +343,6 @@ def pre_train_hnet(args, data_loader_train, hnet_model):
 
 if __name__ == '__main__':
     # plot_loss()
+    init_seeds()
     args = parse_args()
     train(args)

@@ -9,6 +9,12 @@ from matplotlib import pyplot as plt
 device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+POLY_FIT_ORDER = 2
+PRE_H = np.array([-2.04835137e-01, -3.09995252e+00, 7.99098762e+01, -
+2.94687413e+00, 7.06836681e+01, -4.67392998e-02]).astype(np.float32)
+PRE_H = torch.from_numpy(PRE_H).to(device)
+
+
 def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: int = 3, device: str = 'cuda'):
     """
     :param input_pts: the points of the lane of a single image, shape: [k, 3] (k is the number of points)
@@ -22,6 +28,8 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     - pts_projects_normalized: the projected and normalized points of the lane, shape: [3, k]
     - w: the polynomial coefficients, shape: [poly_fit_order + 1]
     """
+    assert poly_fit_order in [2, 3], "poly_fit_order must be 2 or 3"
+
     H = torch.zeros(3, 3, device=device)
 
     # assign the h_prediction to the H matrix
@@ -31,6 +39,12 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     H[1, 1] = transformation_coefficient[3]  # d
     H[1, 2] = transformation_coefficient[4]  # e
     H[2, 1] = transformation_coefficient[5]  # f
+    # H[0, 0] = PRE_H[0]  # a
+    # H[0, 1] = PRE_H[1]  # b
+    # H[0, 2] = PRE_H[2]  # c
+    # H[1, 1] = PRE_H[3]  # d
+    # H[1, 2] = PRE_H[4]  # e
+    # H[2, 1] = PRE_H[5]  # f
     H[-1, -1] = 1
     H = H.type(torch.FloatTensor).to(device)
 
@@ -46,13 +60,7 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     pts_projects = torch.matmul(H, valid_pts_reshaped)
     X = pts_projects[0, :] / pts_projects[2, :]
     Y = pts_projects[1, :] / pts_projects[2, :]
-    Y_One = torch.ones_like(Y)
-    if poly_fit_order == 2:
-        Y_stack = torch.stack([torch.pow(Y, 2), Y, Y_One], dim=1)
-    elif poly_fit_order == 3:
-        Y_stack = torch.stack([torch.pow(Y, 3), torch.pow(Y, 2), Y, Y_One], dim=1)
-    else:
-        raise ValueError('Unknown order', poly_fit_order)
+    Y_stack = torch.vander(Y, N=poly_fit_order+1)
 
     Y_stack_t = Y_stack.transpose(0, 1)
     YtY = torch.matmul(Y_stack_t, Y_stack)
