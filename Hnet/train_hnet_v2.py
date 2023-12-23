@@ -320,7 +320,7 @@ def pre_train_hnet(args, data_loader_train, hnet_model, poly_order=3):
         params, lr=PRE_TRAIN_LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     epochs = args.pre_train_epochs
     poly_order_to_draw = poly_order
-    pre_train_loss=PreTrainHnetLoss()
+    pre_train_loss = PreTrainHnetLoss()
 
     # create weights directory
     weights_dir_path = os.path.join(args.pre_train_save_dir, WEIGHTS_DIR)
