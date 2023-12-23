@@ -10,6 +10,10 @@ from Lanenet.model import Lanenet
 from utils.evaluation import process_instance_embedding
 from Hnet.hnet_utils import run_hnet_and_fit_from_lanenet_cluster, load_hnet_model_with_info
 
+# Use GPU if available, else use CPU
+device = torch.device(
+    'cuda') if torch.cuda.is_available() else torch.device('cpu')
+
 
 def init_args():
     """
@@ -42,7 +46,7 @@ def predict(image_path, lanenet_weights, hnet_weights, poly_order ,output_path='
     assert os.path.exists(image_path), '{:s} not exist'.format(image_path)
     os.makedirs(output_path, exist_ok=True)
     t_start = time.time()
-    image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    image = cv2.imread(image_path, cv2.IMREAD_COLOR)
     org_shape = image.shape
 
     # step1: predict from lanenet model
@@ -76,23 +80,26 @@ def predict(image_path, lanenet_weights, hnet_weights, poly_order ,output_path='
     hnet_model = HNet()
     loaded_hnet_info_dict = load_hnet_model_with_info(hnet_model, hnet_weights)
     poly_order = loaded_hnet_info_dict.get('poly_order', poly_order)
-    hnet_model.to(torch.device('cpu'))
+    # hnet_model.to(torch.device('cpu'))
+    hnet_model.to(device)
     # transform the lanes points back from the lanenet clusters
-    image_hnet, lanes_transformed_back = run_hnet_and_fit_from_lanenet_cluster(cluster_result,
+    _, lanes_transformed_back, _ = run_hnet_and_fit_from_lanenet_cluster(cluster_result,
                                                                                hnet_model, image,
                                                                                poly_fit_order=poly_order)
     color = [[0, 0, 0], [255, 0, 0], [0, 255, 0],
              [0, 0, 255], [255, 215, 0], [0, 255, 255]]
     # paint the lanes on the image
+    image_hnet_for_viz = cv2.resize(image, dsize=(
+        512, 256), interpolation=cv2.INTER_LINEAR)
     for i, lane_pts in enumerate(lanes_transformed_back):
         for point in lane_pts:
             center = (int(point[0]), int(point[1]))
-            cv2.circle(image_hnet, center, 1, color[i], -1)
+            cv2.circle(image_hnet_for_viz, center, 1, color[i], -1)
     # resize to original size
-    image_hnet = cv2.resize(image_hnet, dsize=(
-        org_shape[1], org_shape[0]), interpolation=cv2.INTER_LINEAR)
+    # image_hnet = cv2.resize(image_hnet, dsize=(
+    #     org_shape[1], org_shape[0]), interpolation=cv2.INTER_LINEAR)
     hnet_file_path = os.path.join(output_path, "predict_hnet.png")
-    cv2.imwrite(hnet_file_path, image_hnet)
+    cv2.imwrite(hnet_file_path, image_hnet_for_viz)
 
 
 if __name__ == '__main__':

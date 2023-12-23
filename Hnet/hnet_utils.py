@@ -12,6 +12,11 @@ device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
+PRE_H = np.array([-2.04835137e-01, -3.09995252e+00, 7.99098762e+01, -
+2.94687413e+00, 7.06836681e+01, -4.67392998e-02]).astype(np.float32)
+PRE_H = torch.from_numpy(PRE_H).to(device)
+
+
 def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: int = 3, device: str = 'cuda'):
     """
     :param input_pts: the points of the lane of a single image, shape: [k, 3] (k is the number of points)
@@ -23,7 +28,10 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     - H (torch.Tensor): the transformation matrix (H), shape: [3, 3]
     - preds_transformation_back (torch.Tensor): the predicted and back-projected points of the lane, shape: [3, k]
     - pts_projects_normalized: the projected and normalized points of the lane, shape: [3, k]
+    - w: the polynomial coefficients, shape: [poly_fit_order + 1]
     """
+    assert poly_fit_order in [2, 3], "poly_fit_order must be 2 or 3"
+
     H = torch.zeros(3, 3, device=device)
 
     # assign the h_prediction to the H matrix
@@ -33,6 +41,12 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     H[1, 1] = transformation_coefficient[3]  # d
     H[1, 2] = transformation_coefficient[4]  # e
     H[2, 1] = transformation_coefficient[5]  # f
+    # H[0, 0] = PRE_H[0]  # a
+    # H[0, 1] = PRE_H[1]  # b
+    # H[0, 2] = PRE_H[2]  # c
+    # H[1, 1] = PRE_H[3]  # d
+    # H[1, 2] = PRE_H[4]  # e
+    # H[2, 1] = PRE_H[5]  # f
     H[-1, -1] = 1
     H = H.type(torch.FloatTensor).to(device)
 
@@ -48,6 +62,7 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     pts_projects = torch.matmul(H, valid_pts_reshaped)
     X = pts_projects[0, :] / pts_projects[2, :]
     Y = pts_projects[1, :] / pts_projects[2, :]
+    # Y_stack = torch.vander(Y, N=poly_fit_order+1)
     Y_One = torch.ones_like(Y)
     if poly_fit_order == 2:
         Y_stack = torch.stack([torch.pow(Y, 2), Y, Y_One], dim=1)
@@ -59,10 +74,9 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
 
     Y_stack_t = Y_stack.transpose(0, 1)
     YtY = torch.matmul(Y_stack_t, Y_stack)
-    YtY_inv = torch.pinverse(YtY)
+    YtY_inv = torch.inverse(YtY)
     YtY_inv_Yt = torch.matmul(YtY_inv, Y_stack.transpose(0, 1))
     w = torch.matmul(YtY_inv_Yt, X.unsqueeze(1))
-
     x_preds = torch.matmul(Y_stack, w)
     preds = torch.transpose(torch.stack([torch.squeeze(x_preds, -1) * pts_projects[2, :],
                                          Y * pts_projects[2, :], pts_projects[2, :]], dim=1), 0, 1)
@@ -71,9 +85,18 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     preds_transformation_back = torch.matmul(torch.inverse(H), preds)
 
     # extra returns to use
-    pts_projects_normalized = pts_projects / pts_projects[2, :]
+    pts_projects_normalized = pts_projects / pts_projects[2, :] 
 
-    return valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized
+    
+    # we return a dict for backward compatibility
+    return_dict = {'valid_pts_reshaped': valid_pts_reshaped,
+                     'H': H,
+                     'preds_transformation_back': preds_transformation_back,
+                     'pts_projects_normalized': pts_projects_normalized,
+                     'pts_projects': pts_projects,
+                     'w': w,
+                     'preds': preds}
+    return return_dict
 
 
 def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, poly_fit_order: int = 3):
@@ -104,31 +127,10 @@ def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, p
             lane_pts = torch.concatenate(
                 (lane_pts, torch.ones(lane_pts.shape[0], 1)), dim=1)
 
-        _, _, preds_transformation_back, _ = hnet_transformation(lane_pts,
-                                                                 transformation_coefficient,
-                                                                 poly_fit_order)
-        # valid_pts_reshaped, _,  preds_transformation_back, pts_projects_normalized = hnet_transformation(lane_pts,
-        #                                                          transformation_coefficient,
-        #                                                          poly_fit_order)
-        # def save_coords_to_csv(valid_pts_reshaped, preds_transformation_back, pts_projects_normalized, filepath):
-        #     import pandas as pd
-        #     valid_pts_reshaped = valid_pts_reshaped.transpose(0, 1).detach().cpu().numpy()
-        #     preds_transformation_back = preds_transformation_back.transpose(0, 1).detach().cpu().numpy()
-        #     pts_projects_normalized = pts_projects_normalized.transpose(0, 1).detach().cpu().numpy()
-
-        #     df = pd.DataFrame({
-        #         'valid_pts_reshaped': np.round(valid_pts_reshaped, 2).tolist(),
-        #         'preds_transformation_back': np.round(preds_transformation_back, 2).tolist(),
-        #         'pts_projects_normalized': np.round(pts_projects_normalized, 2).tolist(),
-        #     })
-
-        #     df.to_csv(filepath)
-
+        hnet_transformation_ret = hnet_transformation(lane_pts,transformation_coefficient, poly_fit_order)
+        preds_transformation_back = hnet_transformation_ret['preds_transformation_back']
         preds_transformation_back_list.append(
             preds_transformation_back.transpose(0, 1))
-        # file_path = f"./{len(preds_transformation_back_list)}coords.csv"
-        # save_coords_to_csv(valid_pts_reshaped, preds_transformation_back, pts_projects_normalized, file_path)
-
     return preds_transformation_back_list
 
 
@@ -163,14 +165,6 @@ def run_hnet_and_fit_from_lanenet_cluster(cluster_result_for_hnet,
         coord = np.vstack((x, y)).transpose()
         lanes_pts.append(coord)
 
-        # draw the points on the src image
-        # plt.figure()
-        # plt.title(f"cluster {line_idx}")
-        # plt.imshow(cv2.resize(image, (cluster_result_from_lanenet.shape[1], cluster_result_from_lanenet.shape[0]), interpolation=cv2.INTER_LINEAR))
-        # plt.scatter(x, y, s=1, color='red')
-        # plt.show()
-
-
     # transform list of numpy to list of torch
     lanes_pts = [torch.tensor(lane_pts) for lane_pts in lanes_pts]
     image_for_hnet_inference = torch.tensor(
@@ -187,11 +181,12 @@ def run_hnet_and_fit_from_lanenet_cluster(cluster_result_for_hnet,
     fit_lanes_cluster_results = np.zeros(
         (cluster_result_for_hnet.shape[0], cluster_result_for_hnet.shape[1]), dtype=np.uint8)
     for i, lane in enumerate(lanes_transformed_back):
-        for point in lane:           
-            col_coord = np.clip(int(torch.round(point[0])), 0, cluster_result_for_hnet.shape[1]-1)
-            row_coord = np.clip(int(torch.round(point[1])), 0, cluster_result_for_hnet.shape[0]-1)
-            # +1 because the background is 0
-            fit_lanes_cluster_results[row_coord, col_coord] = i + 1
+        for point in lane:
+            if point is not torch.nan:           
+                col_coord = np.clip(int(torch.round(point[0])), 0, cluster_result_for_hnet.shape[1]-1)
+                row_coord = np.clip(int(torch.round(point[1])), 0, cluster_result_for_hnet.shape[0]-1)
+                # +1 because the background is 0
+                fit_lanes_cluster_results[row_coord, col_coord] = i + 1
 
     return image_hnet, lanes_transformed_back, fit_lanes_cluster_results
 
@@ -208,10 +203,14 @@ def draw_images(lane_points: torch.tensor, image: torch.tensor, transformation_c
     :param prefix_name: prefix name for saving the images
     :param output_path: the output path of the images
     """
-    valid_pts_reshaped, H, preds_transformation_back, pts_projects_normalized = hnet_transformation(
-        input_pts=lane_points,
-        transformation_coefficient=transformation_coefficient,
-        poly_fit_order=poly_fit_order)
+    hnet_transformation_ret = hnet_transformation(
+        lane_points, transformation_coefficient, poly_fit_order)
+    valid_pts_reshaped = hnet_transformation_ret['valid_pts_reshaped']
+    H = hnet_transformation_ret['H']
+    preds_transformation_back = hnet_transformation_ret['preds_transformation_back']
+    pts_projects_normalized = hnet_transformation_ret['pts_projects_normalized']
+
+    
     src_image = image.permute(1, 2, 0).cpu().numpy().astype(np.uint8).copy()
 
     # draw the points on the src image

@@ -3,13 +3,17 @@ import time
 import torch
 import argparse
 import numpy as np
+import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
+# from torch.nn.utils import clip_grad_norm_
 
-from hnet_model import HNet
+from hnet_model import HNet, Resnet_HNet
 from hnet_data_processor import TusimpleForHnetDataSet
-from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, PRE_H
-from hnet_utils import save_loss_to_pickle, draw_images, plot_loss
+from hnet_loss_v2 import PreTrainHnetLoss, HetLoss, REG_TYPE
+from hnet_utils import save_loss_to_pickle, draw_images, plot_loss, PRE_H
 from hnet_utils import save_hnet_model_with_info, load_hnet_model_with_info
+
+torch.autograd.set_detect_anomaly(True)
 
 PRE_TRAIN_LEARNING_RATE = 1e-4
 TRAIN_LEARNING_RATE = 1e-5
@@ -25,6 +29,13 @@ WEIGHTS_DIR = 'weights'
 # Use GPU if available, else use CPU
 device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def init_seeds(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    cudnn.deterministic = False
+    cudnn.benchmark = True
 
 
 def parse_args():
@@ -52,6 +63,8 @@ def parse_args():
     # train phase arguments
     parser.add_argument('--train_epochs', type=int,
                         help='The train epochs', default=5)
+    parser.add_argument('--regularization_type', type=int, help='The regularization type (0/1/2)',
+                        default=REG_TYPE.NONE)
     parser.add_argument('--train_save_dir', type=str, help='The train hnet save dir',
                         default=f"./{TRAIN_DIR}")
     return parser.parse_args()
@@ -75,14 +88,10 @@ def train(args):
     data_loader_validation = torch.utils.data.DataLoader(
         validation_set, batch_size=batch_size, shuffle=True, num_workers=0)
 
-    # Use GPU if available, else use CPU
-    device = torch.device(
-        "cuda") if torch.cuda.is_available() else torch.device("cpu")
-
     # Define the model
     hnet_model = HNet()
+    # hnet_model = Resnet_HNet()
     hnet_model.to(device)
-
     desired_poly_order = args.poly_order
     if args.hnet_weights is not None:
         model_info_dict = load_hnet_model_with_info(
@@ -98,9 +107,6 @@ def train(args):
     else:
         print("No hnet weights file was given, train from scratch")
 
-    # # Define scheduler
-    # lr_scheduler = torch.optim.lr_scheduler.StepLR(
-    #     optimizer, step_size=10, gamma=0.1)
 
     assert args.phase in ['pretrain', 'train',
                           'full_train'], "phase must be pretrain, train or full_train"
@@ -121,8 +127,10 @@ def train_hnet(args, data_loader_train, data_loader_validation, hnet_model, poly
         params, lr=TRAIN_LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     num_epochs = args.train_epochs
     poly_order_to_train = poly_order
+    regularization_type = REG_TYPE(args.regularization_type)
 
-    hnet_loss_function = HetLoss()
+
+    hnet_loss_function = HetLoss(regularization_type)
 
     # create weights directory
     weights_dir_path = os.path.join(args.train_save_dir, WEIGHTS_DIR)
@@ -164,6 +172,7 @@ def train_hnet(args, data_loader_train, data_loader_validation, hnet_model, poly
             # save model state along with other parameters
             save_hnet_model_with_info(hnet_model=hnet_model, epoch=epoch, phase=args.phase,
                                       batch_size=args.batch_size, poly_order=poly_order_to_train,
+                                      regularization=int(regularization_type),
                                       output_path=file_path)
 
             # plot loss over epochs and save
@@ -200,26 +209,45 @@ def train_one_epoch(data_loader_train, epoch, epochs, hnet_model, optimizer, hne
         # possible solutions:
         # 1. maybe to take only lanes were we have at least 40 valid points and let that be the fix number of points for every batch
         # 2. run loss batch by batch and not all at once, than average the loss over the batches
+        
+        # import cv2
+        # os.makedirs('./test_images_color', exist_ok=True)
+        # image_to_draw = gt_images[0].permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+        # image_to_draw = cv2.UMat(image_to_draw)  # Convert to cv::UMat
+        # # paint gt lanes
+        # for lane in gt_lane_points[0]:
+        #     cv2.circle(image_to_draw, (int(lane[0].item()), int(lane[1].item())), 3, (255, 0, 0), -1)
+        # cv2.imwrite(f'./test_images_color/{i}.png', image_to_draw.get())  # Convert back to numpy array with .get()
 
         optimizer.zero_grad()
         transformation_coefficient = hnet_model(gt_images)
         loss = hnet_loss_function(
-            gt_lane_points, transformation_coefficient, poly_fit_order)
+            gt_lane_points, transformation_coefficient, poly_fit_order, gt_images)
+        is_valid_batch_loss = False
 
-        # todo: handle cases of nan Hnet output
-        if loss == -1:
-            continue
+        # loss.backward()
 
-        loss.backward()
-        optimizer.step()
+        if loss.item() < 1000:
+            is_valid_batch_loss = True
+            loss.backward()
+            optimizer.step()
+            curr_epoch_loss_list.append(loss.item())
 
-        curr_epoch_loss_list.append(loss.item())
+        # clip_grad_norm_(hnet_model.parameters(), max_norm=1.0)
+
+        # for param in hnet_model.parameters():
+        #     if torch.isnan(param.grad).any():
+        #         print("NaN gradients detected!")
+
+        # optimizer.step()
+
+        # curr_epoch_loss_list.append(loss.item())
 
         # draw_images(gt_lane_points[i], gt_images[i],
         #             transformation_coefficient[0], poly_fit_order, f"train_with_poly_{poly_fit_order}_test", i,
         #             output_path=images_output_path)
 
-        if (i + 1) % PRINT_EVERY_N_BATCHES == 0:
+        if (i + 1) % PRINT_EVERY_N_BATCHES == 0 and is_valid_batch_loss:
             print('Train: Epoch [{}/{}], Step [{}/{}], loss: {:.4f}, Time: {:.4f}s'
                   .format(epoch, epochs, i + 1, len(data_loader_train), loss.item(),
                           time.time() - start_time))
@@ -292,6 +320,7 @@ def pre_train_hnet(args, data_loader_train, hnet_model, poly_order=3):
         params, lr=PRE_TRAIN_LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     epochs = args.pre_train_epochs
     poly_order_to_draw = poly_order
+    pre_train_loss=PreTrainHnetLoss()
 
     # create weights directory
     weights_dir_path = os.path.join(args.pre_train_save_dir, WEIGHTS_DIR)
@@ -352,6 +381,6 @@ def pre_train_hnet(args, data_loader_train, hnet_model, poly_order=3):
 
 
 if __name__ == '__main__':
-    # plot_loss()
+    init_seeds()
     args = parse_args()
     train(args)

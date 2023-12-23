@@ -8,8 +8,13 @@
 Hnet/pre_train_hnet_weights/
 Hnet/train_hnet_weights/
 Hnet/train/
+evaluation/
 Hnet/pre_train/
 TUSIMPLE/train_set/
 TUSIMPLE/test_set/
+TUSIMPLE/txt_for_local/
+TUSIMPLE/*.json
+
+.vscode/
 
 

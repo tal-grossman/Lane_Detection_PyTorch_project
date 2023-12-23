@@ -1,6 +1,7 @@
 # refence https://github.com/SeungyounShin/LaneNet/blob/master/models/HNet.py
 import torch
 import torch.nn as nn
+from torchvision.models import resnet18, resnet50
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -72,10 +73,20 @@ class HNet(nn.Module):
         x = self.block3(x)
         x = self.pool(x)
         x = x.view(batch,-1)
-        #print(x.shape)
         x = self.head(x)
 
         return x
+
+
+class Resnet_HNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = resnet18(pretrained=True)  # weights='IMAGENET1K_V1')
+        self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 6)
+
+    def forward(self, x):
+        res = self.backbone(x / 255.)
+        return res
 
 
 if __name__ == "__main__":

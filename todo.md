@@ -27,6 +27,15 @@
 - [X] evaluate lanenet cluster and hnet at the same time with different preds fiels - to compare
   - [X] save visu debug images for both in evaluation 
 
+after merge with tomer's regularizer branch:
+- [X] test the model with the max loss threshold (currently under training)
+  - [X] saved under `hnet_train_after_merge_w_tomer` folder (no regularization)
+- [X] finish merge 
+- [X] add regularization to input args
+- ~~[ ] save path of with/without regularization~~
+- [ ] inverstigae why poly 3 desnot work
+- [ ] investigate large losses 
+
 # TODO if we have time
 - [ ] train with all lanes in the same image at one 
   - [ ] requires different dataloader 

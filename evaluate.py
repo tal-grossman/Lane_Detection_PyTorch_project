@@ -116,7 +116,7 @@ def evaluate(args):
 
         # Read image and preprocess it in order to be ready
         # to go through the network
-        gt_img_org = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        gt_img_org = cv2.imread(img_path, cv2.IMREAD_COLOR)
         org_shape = gt_img_org.shape
         gt_image = cv2.resize(gt_img_org, dsize=(
             512, 256), interpolation=cv2.INTER_LINEAR)
@@ -250,7 +250,7 @@ def evaluate(args):
             # write the a_hnet, p_hnet, n_hnet on the image
             axs[0].text(
                 10, 50, f"a_hnet: {a_hnet:.2f}, p_hnet: {p_hnet:.2f}, n_hnet: {n_hnet:.2f}", color='white')
-            axs[0].set_title('fit_lanes_cluster_results')
+            axs[0].set_title(f'fit_lanes_cluster_results, poly_order={poly_order}')
             # Plot the second subplot
             axs[1].imshow(cv2.cvtColor(
                 gt_img_org, cv2.COLOR_BGR2RGB), cmap='inferno')

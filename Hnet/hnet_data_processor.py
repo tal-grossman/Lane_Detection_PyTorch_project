@@ -96,7 +96,7 @@ class TusimpleForHnetDataSet(torch.utils.data.Dataset):
             self._label_image_path[idx])
 
         gt_image = cv2.imread(
-            self._label_image_path[idx], cv2.IMREAD_UNCHANGED)
+            self._label_image_path[idx], cv2.IMREAD_COLOR)
         self.original_shape = gt_image.shape
         gt_image = cv2.resize(gt_image, dsize=self.resize,
                               interpolation=cv2.INTER_LINEAR)
@@ -119,9 +119,9 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import random
     import time
-    train_data_set_path = '/home/talg/Downloads/train_set'
+    train_data_set_path = '/home/tal/git/University/Lane_Detection_PyTorch_project/TUSIMPLE/train_set'
     # train_data_set_path = '/home/tomer/Downloads/EE_master/Deep_Learning/Lane_Detection_Using_Perspective_Transformation_project/TUSimple/train_set'
-    train_data_set = TusimpleForHnetDataSet(train_data_set_path)
+    train_data_set = TusimpleForHnetDataSet(train_data_set_path, resize=(512, 256))
     print("len(train_data_set): ", len(train_data_set))
 
     gt_image, lane_points = train_data_set[random.randint(
@@ -131,7 +131,7 @@ if __name__ == '__main__':
         if lane[2] == 1:
             src_image = gt_image.transpose(1, 2, 0)
             src_image = cv2.circle(
-                src_image, (lane[0], lane[1]), 1, (0, 0, 255), -1)
+                src_image, (int(lane[0]), int(lane[1])), 1, (0, 0, 255), -1)
     plt.imshow(src_image)
     plt.show()
 
