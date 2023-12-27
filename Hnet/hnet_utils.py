@@ -16,6 +16,25 @@ PRE_H = np.array([-2.04835137e-01, -3.09995252e+00, 7.99098762e+01, -
 2.94687413e+00, 7.06836681e+01, -4.67392998e-02]).astype(np.float32)
 PRE_H = torch.from_numpy(PRE_H).to(device)
 
+def get_H_from_coefficients(transformation_coefficient):
+    """
+    Get the H matrix from the transformation coefficients
+    :param transformation_coefficient: the transformation coefficients
+    :return: the H matrix
+    """
+    H = torch.zeros(3, 3, device=device)
+
+    # assign the h_prediction to the H matrix
+    H[0, 0] = transformation_coefficient[0]  # a
+    H[0, 1] = transformation_coefficient[1]  # b
+    H[0, 2] = transformation_coefficient[2]  # c
+    H[1, 1] = transformation_coefficient[3]  # d
+    H[1, 2] = transformation_coefficient[4]  # e
+    H[2, 1] = transformation_coefficient[5]  # f
+    H[-1, -1] = 1
+    H = H.type(torch.FloatTensor).to(device)
+    return H
+
 
 def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: int = 3, device: str = 'cuda'):
     """
@@ -32,23 +51,7 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
     """
     assert poly_fit_order in [2, 3], "poly_fit_order must be 2 or 3"
 
-    H = torch.zeros(3, 3, device=device)
-
-    # assign the h_prediction to the H matrix
-    H[0, 0] = transformation_coefficient[0]  # a
-    H[0, 1] = transformation_coefficient[1]  # b
-    H[0, 2] = transformation_coefficient[2]  # c
-    H[1, 1] = transformation_coefficient[3]  # d
-    H[1, 2] = transformation_coefficient[4]  # e
-    H[2, 1] = transformation_coefficient[5]  # f
-    # H[0, 0] = PRE_H[0]  # a
-    # H[0, 1] = PRE_H[1]  # b
-    # H[0, 2] = PRE_H[2]  # c
-    # H[1, 1] = PRE_H[3]  # d
-    # H[1, 2] = PRE_H[4]  # e
-    # H[2, 1] = PRE_H[5]  # f
-    H[-1, -1] = 1
-    H = H.type(torch.FloatTensor).to(device)
+    H = get_H_from_coefficients(transformation_coefficient)
 
     # 2. transform input_pts using H matrix
     pts_reshaped = input_pts.transpose(0, 1)
@@ -98,8 +101,88 @@ def hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: i
                      'preds': preds}
     return return_dict
 
+def ransac_hnet_transformation(input_pts, transformation_coefficient, poly_fit_order: int = 3, device: str = 'cuda',
+                               ransac_threshold: float = 0.2, ransac_max_iter: int = 1000, ransac_min_sample: int = 10):
+    
+    best_poly_coeffs = None
+    best_inliers_count = 0
+    
+    H = get_H_from_coefficients(transformation_coefficient)
 
-def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, poly_fit_order: int = 3):
+    # 2. transform input_pts using H matrix
+    pts_reshaped = input_pts.transpose(0, 1)
+
+    # 3. filter invalid points
+    valid_points_indices = torch.where(pts_reshaped[2, :] == 1.)[0]
+    valid_pts_reshaped = pts_reshaped[:, valid_points_indices]
+
+    # 4. compute polynomial fit of transformed input_pts
+    valid_pts_reshaped = valid_pts_reshaped.type(torch.FloatTensor).to(device)
+    pts_projects = torch.matmul(H, valid_pts_reshaped)
+    X = pts_projects[0, :] / pts_projects[2, :]
+    Y = pts_projects[1, :] / pts_projects[2, :]
+    # Y_stack = torch.vander(Y, N=poly_fit_order+1)
+    Y_One = torch.ones_like(Y)
+    if poly_fit_order == 2:
+        Y_stack = torch.stack([torch.pow(Y, 2), Y, Y_One], dim=1)
+    elif poly_fit_order == 3:
+        Y_stack = torch.stack(
+            [torch.pow(Y, 3), torch.pow(Y, 2), Y, Y_One], dim=1)
+    else:
+        raise ValueError('Unknown order', poly_fit_order)
+
+    # get projection using ransac_iter_w
+    for _ in range(ransac_max_iter):
+        # sample points
+        sample_indices = np.random.choice(input_pts.shape[0], ransac_min_sample, replace=False)
+        sample_pts = input_pts[sample_indices]
+        # fit polynomial
+        hnet_transformation_ret = hnet_transformation(sample_pts, transformation_coefficient, poly_fit_order, device)
+        ransac_iter_w = hnet_transformation_ret['w']
+        x_preds = torch.matmul(Y_stack, ransac_iter_w)
+        # compute inliers
+        inliers = X[torch.abs(x_preds.squeeze() - X) < ransac_threshold]
+        inliers_count = len(inliers)
+        total_rmse = torch.sqrt(torch.mean(torch.pow(x_preds.squeeze() - X, 2)))
+        if best_poly_coeffs is None:
+            # init - take the first iteration as the best
+            best_poly_coeffs = ransac_iter_w
+        if inliers_count > best_inliers_count:
+            best_inliers_count = inliers_count
+            best_inliers = inliers
+            best_poly_coeffs = ransac_iter_w
+            # # if good enough exit
+            # if total_rmse < ransac_threshold:
+            #     break
+
+    # compute final projection
+    x_preds = torch.matmul(Y_stack, best_poly_coeffs)
+    preds = torch.transpose(torch.stack([torch.squeeze(x_preds, -1) * pts_projects[2, :],
+                                            Y * pts_projects[2, :], pts_projects[2, :]], dim=1), 0, 1)
+    # 5. transform polynomial fit back using H matrix
+    preds_transformation_back = torch.matmul(torch.inverse(H), preds)
+
+    # extra returns to use
+    pts_projects_normalized = pts_projects / pts_projects[2, :] 
+
+    
+    # we return a dict for backward compatibility
+    return_dict = {'valid_pts_reshaped': valid_pts_reshaped,
+                     'H': H,
+                     'preds_transformation_back': preds_transformation_back,
+                     'pts_projects_normalized': pts_projects_normalized,
+                     'pts_projects': pts_projects,
+                     'w': best_poly_coeffs,
+                     'preds': preds}
+    return return_dict
+
+
+    
+
+
+def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, poly_fit_order: int = 3,
+                                             use_ransac: bool = False,
+                                             use_pre_H = False):
     """
     Transform back the lanes points after polynomial fit
     :param image: the image to transform back the lanes points. type: tensor shape: [1, 3, H, W]
@@ -108,10 +191,13 @@ def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, p
     :param poly_fit_order: the order of the polynomial
     :return: the list of the transformed back lanes points. type: list of tensors shape: [k, 3]
     """
-    # inference
-    transformation_coefficient = hnet_model(image)
-    # just to squeeze batch size to 1
-    transformation_coefficient = transformation_coefficient[0]
+    if use_pre_H:
+        transformation_coefficient = PRE_H
+    else:
+        # inference
+        transformation_coefficient = hnet_model(image)
+        # just to squeeze batch size to 1
+        transformation_coefficient = transformation_coefficient[0]
 
     # multiply coefficents to scale by 4 because lanenet image is 4 time the hnet image
     multiplier = torch.tensor(
@@ -127,7 +213,10 @@ def hnet_transform_back_points_after_polyfit(image, hnet_model, list_lane_pts, p
             lane_pts = torch.concatenate(
                 (lane_pts, torch.ones(lane_pts.shape[0], 1)), dim=1)
 
-        hnet_transformation_ret = hnet_transformation(lane_pts,transformation_coefficient, poly_fit_order)
+        if use_ransac:
+            hnet_transformation_ret = ransac_hnet_transformation(lane_pts, transformation_coefficient, poly_fit_order)
+        else:
+            hnet_transformation_ret = hnet_transformation(lane_pts,transformation_coefficient, poly_fit_order)
         preds_transformation_back = hnet_transformation_ret['preds_transformation_back']
         preds_transformation_back_list.append(
             preds_transformation_back.transpose(0, 1))
@@ -138,7 +227,9 @@ def run_hnet_and_fit_from_lanenet_cluster(cluster_result_for_hnet,
                                           loaded_hnet_model, image,
                                           poly_fit_order=3,
                                           take_average_lane_cluster_pts=False,
-                                          device_to_use='cuda'):
+                                          device_to_use='cuda',
+                                          use_hnet_ransac: bool = False,
+                                          use_pre_H: bool = False):
     """
     Run the hnet model and fit the lanes points from the lanenet cluster
     :param cluster_result_for_hnet: the cluster result from the lanenet model
@@ -176,7 +267,9 @@ def run_hnet_and_fit_from_lanenet_cluster(cluster_result_for_hnet,
     image_for_hnet_inference = image_for_hnet_inference.repeat(10, 1, 1,
                                                                1)  # todo fix this so it doesn't have to be repeat as batch size
     lanes_transformed_back = hnet_transform_back_points_after_polyfit(image_for_hnet_inference, loaded_hnet_model,
-                                                                      lanes_pts, poly_fit_order=poly_fit_order)
+                                                                      lanes_pts, poly_fit_order=poly_fit_order,
+                                                                      use_ransac=use_hnet_ransac,
+                                                                      use_pre_H=use_pre_H)
     # create mask in size of the image (128, 64) from the lanes
     fit_lanes_cluster_results = np.zeros(
         (cluster_result_for_hnet.shape[0], cluster_result_for_hnet.shape[1]), dtype=np.uint8)

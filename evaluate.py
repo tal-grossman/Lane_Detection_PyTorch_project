@@ -40,6 +40,10 @@ def parse_args():
     parser.add_argument('--poly_order', type=int,
                         help='poly order to fit when evaultating. if info exist in loaded hnet model, use loaded value',
                         required=False, default=2)
+    parser.add_argument('--polyfit_with_ransac', action='store_true', 
+                        help='poly fit with ransac in hnet_trasnformation')
+    parser.add_argument('--use_pre_H', action='store_true', 
+                        help='eval with pre H in hnet_trasnformation instead running hnet inference')
     # evaluation files paths
     parser.add_argument('--evaluation_output', type=str,
                         help='path evaluation output dir', required=False, default='./evaluation/')
@@ -74,6 +78,8 @@ def evaluate(args):
 
     model_path = args.lanenet_model_path
     hnet_model_path = args.hnet_model_path
+    polyfit_with_ransac = args.polyfit_with_ransac
+    eval_with_pre_H = args.use_pre_H
 
     # Initialize model and load its parameters
     LaneNet_model = Lanenet(2, 4)
@@ -164,7 +170,8 @@ def evaluate(args):
         run_hnet_fit_start = time.time()
         # transform the lanes points back from the lanenet clusters
         image_hnet, lanes_transformed_back, fit_lanes_cluster_results = run_hnet_and_fit_from_lanenet_cluster(
-            cluster_result_for_hnet, hnet_model, gt_img_org, poly_fit_order=poly_order)
+            cluster_result_for_hnet, hnet_model, gt_img_org, poly_fit_order=poly_order, 
+            use_hnet_ransac=polyfit_with_ransac, use_pre_H=eval_with_pre_H)
 
         run_hnet_fit_end = time.time()
         # resize lanes mask to original size

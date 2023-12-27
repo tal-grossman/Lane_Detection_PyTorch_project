@@ -30,13 +30,18 @@ def init_args():
     parser.add_argument('--poly_order', type=int,
                         help='poly order to fit when evaultating. if info exist in loaded hnet model, use loaded value',
                         required=False, default=2)
+    parser.add_argument('--polyfit_with_ransac', type=bool, help='poly fit with ransac in hnet_trasnformation',
+                        required=False, default=True)
+    parser.add_argument('--use_pre_H', type=bool, help='use pre H in hnet_trasnformation instead running hnet inference',
+                        required=False, default=False)
     parser.add_argument('--output_path', type=str,
                         help='The output dir to save the predict result')
 
     return parser.parse_args()
 
 
-def predict(image_path, lanenet_weights, hnet_weights, poly_order ,output_path='./out'):
+def predict(image_path, lanenet_weights, hnet_weights, poly_order,
+            use_hnet_ransac: bool = False, use_pre_H: bool = False, output_path='./out'):
     """
     :param image_path:
     :param lanenet_weights:
@@ -84,8 +89,10 @@ def predict(image_path, lanenet_weights, hnet_weights, poly_order ,output_path='
     hnet_model.to(device)
     # transform the lanes points back from the lanenet clusters
     _, lanes_transformed_back, _ = run_hnet_and_fit_from_lanenet_cluster(cluster_result,
-                                                                               hnet_model, image,
-                                                                               poly_fit_order=poly_order)
+                                                                         hnet_model, image,
+                                                                         poly_fit_order=poly_order,
+                                                                         take_average_lane_cluster_pts=False,
+                                                                         use_hnet_ransac=True)
     color = [[0, 0, 0], [255, 0, 0], [0, 255, 0],
              [0, 0, 255], [255, 215, 0], [0, 255, 255]]
     # paint the lanes on the image
@@ -105,5 +112,6 @@ def predict(image_path, lanenet_weights, hnet_weights, poly_order ,output_path='
 if __name__ == '__main__':
     # init args
     args = init_args()
-    predict(args.image_path, args.lanenet_weights,
-            args.hnet_weights, args.poly_order, args.output_path)
+    predict(image_path=args.image_path, lanenet_weights=args.lanenet_weights,
+            hnet_weights=args.hnet_weights, poly_order=args.poly_order, use_hnet_ransac=args.polyfit_with_ransac, 
+            use_pre_H=args.use_pre_H, output_path=args.output_path)

@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from torch.nn.modules.loss import _Loss
 
-from hnet_utils import hnet_transformation, PRE_H
+from Hnet.hnet_utils import hnet_transformation, PRE_H
 
 # Use GPU if available, else use CPU
 device = torch.device(
