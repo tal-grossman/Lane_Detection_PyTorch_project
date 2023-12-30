@@ -85,6 +85,7 @@ def evaluate(args):
     LaneNet_model = Lanenet(2, 4)
     LaneNet_model.load_state_dict(torch.load(model_path))
     LaneNet_model.to(device)
+    LaneNet_model.eval()
     print('Lanenet Model successfully loaded!')
 
     # Initialize the Hnet model and load its parameters
@@ -93,6 +94,7 @@ def evaluate(args):
     loaded_hnet_info_dict = load_hnet_model_with_info(
         hnet_model, hnet_model_path)
     hnet_model.to(device)
+    hnet_model.eval()
     poly_order = loaded_hnet_info_dict.get('poly_order', args.poly_order)
     print('Hnet Model successfully loaded!')
 

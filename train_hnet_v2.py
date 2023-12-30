@@ -31,11 +31,11 @@ device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
-def init_seeds(seed=0):
+def init_seeds(seed=60):
     np.random.seed(seed)
     torch.manual_seed(seed)
-    cudnn.deterministic = False
-    cudnn.benchmark = True
+    cudnn.deterministic = True
+    cudnn.benchmark = False
 
 
 def parse_args():
@@ -198,6 +198,7 @@ def train_one_epoch(data_loader_train, epoch, epochs, hnet_model, optimizer, hne
     start_time = time.time()
     curr_epoch_loss_list = []
     hnet_model.train()
+    ALL_LOSS_ARE_VALID = True
     for i, (gt_images, gt_lane_points) in enumerate(data_loader_train):
         gt_images = Variable(gt_images).to(device).type(torch.float32)
         gt_lane_points = Variable(gt_lane_points).to(device)
@@ -227,7 +228,7 @@ def train_one_epoch(data_loader_train, epoch, epochs, hnet_model, optimizer, hne
 
         # loss.backward()
 
-        if loss.item() < 1000:
+        if ALL_LOSS_ARE_VALID or loss.item() < 1000:
             is_valid_batch_loss = True
             loss.backward()
             optimizer.step()
