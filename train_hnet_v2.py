@@ -31,7 +31,7 @@ device = torch.device(
     "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
-def init_seeds(seed=60):
+def init_seeds(seed=300):
     np.random.seed(seed)
     torch.manual_seed(seed)
     cudnn.deterministic = True
